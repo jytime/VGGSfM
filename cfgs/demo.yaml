@@ -1,18 +1,26 @@
+hydra:
+    run:
+        dir: .
+
 seed: 0
 debug: False
-use_bf16: False
+use_bf16: True
 query_frame_num: 3
 return_in_pt3d: True
 load_gt: False
-visualize: False
-fmat_thres: 0.5
-init_max_reproj_error: 0.5
+visualize: True
+fmat_thres: 2.0
+init_max_reproj_error: 2.0
+max_query_pts: 4096
 
-SEQ_DIR: /PATH/TO/YOUR/IMAGE/FOLDER
-resume_ckpt:  /data/home/jianyuan/OpenSource/VGGSfM/tmp/vggsfm102.bin
+SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/s06_sample
+resume_ckpt:  /data/home/jianyuan/OpenSource/VGGSfM/tmp/vggsfm_v103.bin
 
 
+use_poselib: True
 max_ransac_iters: 4096
+
+
 
 MODEL:
     _target_: vggsfm.models.VGGSfM

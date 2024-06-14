@@ -1,0 +1,42 @@
+seed: 0
+debug: false
+use_bf16: true
+query_frame_num: 3
+return_in_pt3d: true
+load_gt: false
+visualize: true
+fmat_thres: 2.0
+init_max_reproj_error: 2.0
+max_query_pts: 4096
+SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/s06_sample
+resume_ckpt: /data/home/jianyuan/OpenSource/VGGSfM/tmp/vggsfm_v103.bin
+use_poselib: true
+max_ransac_iters: 4096
+MODEL:
+  _target_: vggsfm.models.VGGSfM
+  TRACK:
+    _target_: vggsfm.models.TrackerPredictor
+    efficient_corr: false
+    COARSE:
+      stride: 4
+      down_ratio: 2
+      FEATURENET:
+        _target_: vggsfm.models.BasicEncoder
+      PREDICTOR:
+        _target_: vggsfm.models.BaseTrackerPredictor
+    FINE:
+      FEATURENET:
+        _target_: vggsfm.models.ShallowEncoder
+      PREDICTOR:
+        _target_: vggsfm.models.BaseTrackerPredictor
+        depth: 4
+        corr_levels: 3
+        corr_radius: 3
+        latent_dim: 32
+        hidden_size: 256
+        fine: true
+        use_spaceatt: false
+  CAMERA:
+    _target_: vggsfm.models.CameraPredictor
+  TRIANGULAE:
+    _target_: vggsfm.models.Triangulator

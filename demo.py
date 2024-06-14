@@ -17,17 +17,24 @@ from visdom import Visdom
 
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, get_original_cwd
-from pytorch3d.renderer.cameras import PerspectiveCameras
-from pytorch3d.implicitron.tools import model_io, vis_utils
-from pytorch3d.structures import Pointclouds
-from pytorch3d.vis.plotly_vis import plot_scene
 
-from gluefactory.models.extractors.superpoint_open import SuperPoint
-from gluefactory.models.extractors.sift import SIFT
+# from gluefactory.models.extractors.superpoint_open import SuperPoint
+# from gluefactory.models.extractors.sift import SIFT
+
+from lightglue import LightGlue, SuperPoint, SIFT, ALIKED
+
 
 from vggsfm.datasets.sequence_loader import SequenceLoader
 
 from vggsfm.two_view_geo.estimate_preliminary import estimate_preliminary_cameras
+
+try:
+    import poselib
+    from vggsfm.two_view_geo.estimate_preliminary import estimate_preliminary_cameras_poselib
+    print("Poselib is available")
+except:
+    print("Poselib is not installed. Please disable use_poselib")
+    
 from vggsfm.utils.utils import (
     set_seed_and_print,
     farthest_point_sampling,
@@ -36,6 +43,8 @@ from vggsfm.utils.utils import (
 )
 from vggsfm.utils.metric import camera_to_rel_deg, calculate_auc, calculate_auc_np
 import pycolmap
+
+from minipytorch3d.cameras import PerspectiveCameras
 
 
 @hydra.main(config_path="cfgs/", config_name="demo")
@@ -54,7 +63,8 @@ def test_fn(cfg: DictConfig):
     # Model instantiation
     model = instantiate(cfg.MODEL, _recursive_=False, cfg=cfg)
 
-    device = "cuda"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     model = model.to(device)
 
     # Prepare test dataset
@@ -71,7 +81,14 @@ def test_fn(cfg: DictConfig):
     error_dict = {"rError": [], "tError": []}
 
     if cfg.visualize:
-        viz = Visdom()
+        from pytorch3d.structures import Pointclouds
+        from pytorch3d.vis.plotly_vis import plot_scene
+        from pytorch3d.implicitron.tools import model_io, vis_utils
+
+        viz = vis_utils.get_visdom_connection(
+            server=f"http://10.200.160.58", port=int(os.environ.get("VISDOM_PORT", 10088))
+        )
+        # viz = Visdom()
 
     sequence_list = test_dataset.sequence_list
 
@@ -142,9 +159,11 @@ def test_fn(cfg: DictConfig):
 
         if cfg.visualize:
             pcl = Pointclouds(points=predictions["points3D"][None])
-            visual_dict = {"scenes": {"points": pcl, "cameras": pred_cameras}}
+            # visual_dict = {"scenes": {"points": pcl, "cameras": pred_cameras}}
+            visual_dict = {"scenes": {"points": pcl}}
+
             fig = plot_scene(visual_dict, camera_scale=0.05)
-            viz.plotlyplot(fig, env=f"demo_visual", win="3D")
+            viz.plotlyplot(fig, env=f"demo_visual_debug", win="3D")
 
         # For more details about error computation,
         # You can refer to IMC benchmark
@@ -207,38 +226,37 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     # i.e., the one has highest (average) cosine similarity to all others
     # Then use farthest_point_sampling to find the next ones
     # The number of query frames is determined by query_frame_num
-    query_frame_indexes = find_query_frame_indexes(reshaped_image, camera_predictor, query_frame_num)
+    
+    
+    # The code below switchs the first frame (frame 0) to the most common frame
+    query_frame_indexes = find_query_frame_indexes(reshaped_image, camera_predictor, frame_num)
+
+    center_frame_index = query_frame_indexes[0]
+    center_order = calculate_index_mappings(center_frame_index, frame_num, device=device)
+
+    images, crop_params = switch_tensor_order([images, crop_params], center_order, dim=1)
+    reshaped_image = switch_tensor_order([reshaped_image], center_order, dim=0)[0]
+
+    # Also update query_frame_indexes:
+    query_frame_indexes = [center_frame_index if x == 0 else x for x in query_frame_indexes]
+    query_frame_indexes[0] = 0
+
+
+    # only pick query_frame_num 
+    query_frame_indexes = query_frame_indexes[:query_frame_num]
 
     # Prepare the methods to extract query points
-    superpoint = SuperPoint({"nms_radius": 4, "force_num_keypoints": True}).cuda().eval()
-    sift = SIFT({}).cuda().eval()
+    # superpoint = SuperPoint({"nms_radius": 4, "force_num_keypoints": True}).cuda().eval()
+    # sift = SIFT({}).cuda().eval()
+    # aliked = ALIKED(max_num_keypoints=cfg.max_query_pts, detection_threshold=0.05).eval().to(device)
+
+    extractor = SuperPoint(max_num_keypoints=cfg.max_query_pts, detection_threshold=0.0001).eval().to(device)
+    
 
     # Prepare image feature maps for tracker
     fmaps_for_tracker = track_predictor.process_images_to_fmaps(images)
 
-    pred_track_list = []
-    pred_vis_list = []
-    pred_score_list = []
-
-    for query_index in query_frame_indexes:
-        # Find query_points at the query frame
-        query_points = get_query_points(superpoint, sift, images[:, query_index])
-
-        # Switch so that query_index frame stays at the first frame
-        # This largely simplifies the code structure of tracker
-        new_order = calculate_index_mappings(query_index, frame_num, device=device)
-        images_feed, fmaps_feed = switch_tensor_order([images, fmaps_for_tracker], new_order)
-
-        # Feed into track predictor
-        fine_pred_track, _, pred_vis, pred_score = track_predictor(images_feed, query_points, fmaps=fmaps_feed)
-
-        # Switch back the predictions
-        fine_pred_track, pred_vis, pred_score = switch_tensor_order([fine_pred_track, pred_vis, pred_score], new_order)
-
-        # Append predictions for different queries
-        pred_track_list.append(fine_pred_track)
-        pred_vis_list.append(pred_vis)
-        pred_score_list.append(pred_score)
+    pred_track_list, pred_vis_list, pred_score_list = predict_tracks(track_predictor, extractor, images, fmaps_for_tracker, query_frame_indexes, frame_num, device)
 
     pred_track = torch.cat(pred_track_list, dim=2)
     pred_vis = torch.cat(pred_vis_list, dim=2)
@@ -259,16 +277,24 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
         force_vis = torch.logical_and(hvis, wvis)
         pred_vis = pred_vis * force_vis.float()
 
+    # TODO: plot 2D matches
+    
+    if cfg.use_poselib:
+        estimate_preliminary_cameras_fn = estimate_preliminary_cameras_poselib
+    else:
+        estimate_preliminary_cameras_fn = estimate_preliminary_cameras
+    
     # Estimate preliminary_cameras by recovering fundamental/essential/homography matrix from 2D matches
     # By default, we use fundamental matrix estimation with 7p/8p+LORANSAC
     # All the operations are batched and differentiable (if necessary)
-    preliminary_cameras, preliminary_dict = estimate_preliminary_cameras(
+    preliminary_cameras, preliminary_dict = estimate_preliminary_cameras_fn(
         pred_track,
         pred_vis,
         width,
         height,
         tracks_score=pred_score,
         loopresidual=True,
+        max_error = cfg.fmat_thres,
         max_ransac_iters=cfg.max_ransac_iters,
     )
 
@@ -294,6 +320,9 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
         init_max_reproj_error=cfg.init_max_reproj_error,
     )
 
+    # Switch back
+    import pdb;pdb.set_trace()
+    print("you have to switch it back!")
     predictions["pred_cameras"] = BA_cameras
     predictions["extrinsics_opencv"] = extrinsics_opencv
     predictions["intrinsics_opencv"] = intrinsics_opencv
@@ -302,21 +331,33 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
 
     return predictions
 
+def predict_tracks(track_predictor, extractor, images, fmaps_for_tracker, query_frame_indexes, frame_num, device):
+    pred_track_list = []
+    pred_vis_list = []
+    pred_score_list = []
 
-def get_query_points(superpoint, sift, query_image, max_query_num=4096):
-    # Run superpoint and sift on the target frame
-    # Feel free to modify for your own
+    for query_index in query_frame_indexes:
+        # Find query_points at the query frame
+        # query_points = get_query_points(superpoint, sift, images[:, query_index])
+        query_points = extractor.extract(images[:, query_index])["keypoints"]
 
-    pred_sp = superpoint({"image": query_image})["keypoints"]
-    pred_sift = sift({"image": query_image})["keypoints"]
+        # Switch so that query_index frame stays at the first frame
+        # This largely simplifies the code structure of tracker
+        new_order = calculate_index_mappings(query_index, frame_num, device=device)
+        images_feed, fmaps_feed = switch_tensor_order([images, fmaps_for_tracker], new_order)
 
-    query_points = torch.cat([pred_sp, pred_sift], dim=1)
+        # Feed into track predictor
+        fine_pred_track, _, pred_vis, pred_score = track_predictor(images_feed, query_points, fmaps=fmaps_feed)
 
-    if query_points.shape[1] > max_query_num:
-        random_point_indices = torch.randperm(query_points.shape[1])[:max_query_num]
-        query_points = query_points[:, random_point_indices, :]
+        # Switch back the predictions
+        fine_pred_track, pred_vis, pred_score = switch_tensor_order([fine_pred_track, pred_vis, pred_score], new_order)
 
-    return query_points
+        # Append predictions for different queries
+        pred_track_list.append(fine_pred_track)
+        pred_vis_list.append(pred_vis)
+        pred_score_list.append(pred_score)
+
+    return pred_track_list, pred_vis_list, pred_score_list
 
 
 def find_query_frame_indexes(reshaped_image, camera_predictor, query_frame_num, image_size=336):
