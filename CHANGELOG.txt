@@ -1,0 +1,12 @@
+VGGSfM 2.0
+
+* Totally Remove PyTorch3D
+* Add Poselib as an option for Fundamental Matrix Estimation
+* Support COLMAP-tyle output
+* Provide focal length in pixel 
+* Provide an example for using VGGSfM for 3D Gaussian
+* Normalize the scene after each BA
+
+
+
+

@@ -86,7 +86,7 @@ def test_fn(cfg: DictConfig):
         from pytorch3d.implicitron.tools import model_io, vis_utils
 
         viz = vis_utils.get_visdom_connection(
-            server=f"http://10.200.160.58", port=int(os.environ.get("VISDOM_PORT", 10088))
+            server=f"http://10.200.188.27", port=int(os.environ.get("VISDOM_PORT", 10088))
         )
         # viz = Visdom()
 
@@ -297,7 +297,7 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
         max_error = cfg.fmat_thres,
         max_ransac_iters=cfg.max_ransac_iters,
     )
-
+    
     pose_predictions = camera_predictor(reshaped_image, batch_size=batch_num, preliminary_cameras=preliminary_cameras)
 
     pred_cameras = pose_predictions["pred_cameras"]
@@ -321,7 +321,10 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     )
 
     # Switch back
+    # NOTE we changed the image order previously, now we need to switch it back
     import pdb;pdb.set_trace()
+    
+    
     print("you have to switch it back!")
     predictions["pred_cameras"] = BA_cameras
     predictions["extrinsics_opencv"] = extrinsics_opencv

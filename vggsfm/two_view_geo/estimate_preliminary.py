@@ -36,9 +36,9 @@ def estimate_preliminary_cameras_poselib(tracks,
     height,
     tracks_score=None,
     max_error=0.5,
-    lo_num=300,
-    max_ransac_iters=4096,
+    max_ransac_iters=20000,
     predict_essential=False,
+    lo_num=None,
     predict_homo=False,
     loopresidual=False,
 ):
@@ -49,7 +49,7 @@ def estimate_preliminary_cameras_poselib(tracks,
 
     valid_mask = (tracks_vis >= 0.05)[:, 1:].reshape(B * (S - 1), N)
 
-    fmat_list = []
+    fmat = []
     inlier_mask = []
     for idx in range(len(reference_points)):
         kps_left = query_points[0].cpu().numpy()
@@ -60,18 +60,26 @@ def estimate_preliminary_cameras_poselib(tracks,
         kps_left = kps_left[cur_inlier_mask]
         kps_right = kps_right[cur_inlier_mask]
         
-        fmat, info = poselib.estimate_fundamental(kps_left, kps_right, 
+        cur_fmat, info = poselib.estimate_fundamental(kps_left, kps_right, 
                                                   {'max_epipolar_error': max_error, 
-                                                   "max_iterations": 100000, "min_iterations": 1000, 
+                                                   "max_iterations": max_ransac_iters, "min_iterations": 1000, 
                                                    "real_focal_check": True, "progressive_sampling": False})
         
         cur_inlier_mask[cur_inlier_mask] = np.array(info['inliers'])
         
-        fmat_list.append(fmat)
+        fmat.append(cur_fmat)
         inlier_mask.append(cur_inlier_mask)
-        
-    import pdb;pdb.set_trace()
-    m=1
+    
+    fmat = torch.from_numpy(np.array(fmat)).to(query_points.device)
+    inlier_mask = torch.from_numpy(np.array(inlier_mask)).to(query_points.device)
+
+    preliminary_dict = {
+        "fmat": fmat,
+        "fmat_inlier_mask": inlier_mask,
+    }
+
+    return None, preliminary_dict
+
 
 
 def estimate_preliminary_cameras(

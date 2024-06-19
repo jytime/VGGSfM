@@ -14,9 +14,11 @@ import torch.nn.functional as F
 
 from typing import Optional, Tuple, Union
 from einops import rearrange, repeat
-from pytorch3d.renderer import HarmonicEmbedding
-from pytorch3d.renderer.cameras import CamerasBase, PerspectiveCameras
-from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion, quaternion_to_matrix
+from minipytorch3d.harmonic_embedding import HarmonicEmbedding
+from minipytorch3d.cameras import CamerasBase, PerspectiveCameras
+from minipytorch3d.rotation_conversions import matrix_to_quaternion, quaternion_to_matrix
+
+from ..utils.metric import closed_form_inverse_OpenCV
 
 EPS = 1e-9
 
@@ -28,6 +30,7 @@ def pose_encoding_to_camera(
     min_focal_length=0.1,
     max_focal_length=30,
     return_dict=False,
+    to_OpenCV = True
 ):
     """
     Args:
@@ -59,6 +62,29 @@ def pose_encoding_to_camera(
         focal_length = torch.clamp(focal_length, min=min_focal_length, max=max_focal_length)
     else:
         raise ValueError(f"Unknown pose encoding {pose_encoding_type}")
+
+
+    if to_OpenCV:
+        ### From Pytorch3D coordinate to OpenCV coordinate:
+        # I hate coordinate conversion
+        R[:, :, :2] *= -1
+        abs_T[:, :2] *= -1
+        R = R.permute(0, 2, 1)
+
+        extrinsics_4x4 = torch.eye(4, 4).to(R.dtype).to(R.device)
+        extrinsics_4x4 = extrinsics_4x4[None].repeat(len(R), 1, 1)
+        
+        extrinsics_4x4[:,:3,:3] = R.clone()
+        extrinsics_4x4[:,:3,3] = abs_T.clone()
+
+        rel_transform = closed_form_inverse_OpenCV(extrinsics_4x4[0:1])
+        rel_transform = rel_transform.expand(len(extrinsics_4x4), -1, -1)
+        
+        # relative to the first camera
+        extrinsics_4x4 = torch.bmm(rel_transform, extrinsics_4x4)
+
+        R = extrinsics_4x4[:,:3,:3]
+        abs_T = extrinsics_4x4[:,:3,3] 
 
     if return_dict:
         return {"focal_length": focal_length, "R": R, "T": abs_T}
