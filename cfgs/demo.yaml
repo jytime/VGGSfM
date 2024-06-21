@@ -4,9 +4,9 @@ hydra:
 
 seed: 0
 debug: False
-use_bf16: True
+mixed_precision: bf16
 query_frame_num: 3
-return_in_pt3d: True
+# return_in_pt3d: True
 load_gt: False
 visualize: True
 fmat_thres: 2.0

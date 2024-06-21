@@ -74,8 +74,8 @@ def estimate_preliminary_cameras_poselib(tracks,
     inlier_mask = torch.from_numpy(np.array(inlier_mask)).to(query_points.device)
 
     preliminary_dict = {
-        "fmat": fmat,
-        "fmat_inlier_mask": inlier_mask,
+        "fmat": fmat[None],
+        "fmat_inlier_mask": inlier_mask[None],
     }
 
     return None, preliminary_dict

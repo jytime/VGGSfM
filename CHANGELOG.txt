@@ -6,7 +6,11 @@ VGGSfM 2.0
 * Provide focal length in pixel 
 * Provide an example for using VGGSfM for 3D Gaussian
 * Normalize the scene after each BA
+* Remove preliminary_cameras for simplicity 
+* Switch to lightglue instead of gluefactory
+* Upgrade pycolmap from 0.5.0 to 0.6.1
 
 
 
-
+TODO:
+1. Make precision consistent 

@@ -284,7 +284,7 @@ def refine_pose(
 
             if second_refine:
                 # refine a second time by filtering out some points with a high reprojection error
-                extri_mat = cam_from_world.matrix
+                extri_mat = cam_from_world.matrix()
                 intri_mat = pycamera.calibration_matrix()
                 homo_points3D = np.hstack((points3D, np.ones((points3D.shape[0], 1))))
 
@@ -305,7 +305,7 @@ def refine_pose(
                 refoptions.gradient_tolerance = 1
                 cam_from_world = answer["cam_from_world"]
 
-        extri_mat = cam_from_world.matrix
+        extri_mat = cam_from_world.matrix()
         intri_mat = pycamera.calibration_matrix()
         refined_extrinsics.append(extri_mat)
         refined_intrinsics.append(intri_mat)

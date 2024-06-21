@@ -122,26 +122,25 @@ def test_fn(cfg: DictConfig):
         crop_params = crop_params.unsqueeze(0)
 
         batch_size = len(images)
-
+        
         with torch.no_grad():
             # Run the model
-            if cfg.use_bf16:
-                with autocast(dtype=torch.bfloat16):
-                    predictions = run_one_scene(
-                        model,
-                        images,
-                        crop_params=crop_params,
-                        query_frame_num=cfg.query_frame_num,
-                        return_in_pt3d=cfg.return_in_pt3d,
-                        cfg=cfg,
-                    )
+            assert cfg.mixed_precision in ("None", "bf16", "fp16")
+            if cfg.mixed_precision == "None":
+                dtype = torch.float32
+            elif cfg.mixed_precision == "bf16":
+                dtype = torch.bfloat16
+            elif cfg.mixed_precision == "fp16":
+                dtype = torch.float16
             else:
+                raise NotImplementedError(f"dtype {cfg.mixed_precision} is not supported now")
+            
+            with autocast(dtype=dtype):
                 predictions = run_one_scene(
                     model,
                     images,
                     crop_params=crop_params,
                     query_frame_num=cfg.query_frame_num,
-                    return_in_pt3d=cfg.return_in_pt3d,
                     cfg=cfg,
                 )
 
@@ -163,7 +162,7 @@ def test_fn(cfg: DictConfig):
             visual_dict = {"scenes": {"points": pcl}}
 
             fig = plot_scene(visual_dict, camera_scale=0.05)
-            viz.plotlyplot(fig, env=f"demo_visual_debug", win="3D")
+            viz.plotlyplot(fig, env=f"demo_visual_debugHAHA", win="3D")
 
         # For more details about error computation,
         # You can refer to IMC benchmark
@@ -256,11 +255,7 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     # Prepare image feature maps for tracker
     fmaps_for_tracker = track_predictor.process_images_to_fmaps(images)
 
-    pred_track_list, pred_vis_list, pred_score_list = predict_tracks(track_predictor, extractor, images, fmaps_for_tracker, query_frame_indexes, frame_num, device)
-
-    pred_track = torch.cat(pred_track_list, dim=2)
-    pred_vis = torch.cat(pred_vis_list, dim=2)
-    pred_score = torch.cat(pred_score_list, dim=2)
+    pred_track, pred_vis, pred_score = predict_tracks(track_predictor, extractor, images, fmaps_for_tracker, query_frame_indexes, frame_num, device)
 
     torch.cuda.empty_cache()
 
@@ -284,9 +279,11 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     else:
         estimate_preliminary_cameras_fn = estimate_preliminary_cameras
     
+    
     # Estimate preliminary_cameras by recovering fundamental/essential/homography matrix from 2D matches
     # By default, we use fundamental matrix estimation with 7p/8p+LORANSAC
     # All the operations are batched and differentiable (if necessary)
+    # except when you enable use_poselib to save GPU memory
     preliminary_cameras, preliminary_dict = estimate_preliminary_cameras_fn(
         pred_track,
         pred_vis,
@@ -303,11 +300,6 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     pred_cameras = pose_predictions["pred_cameras"]
 
     # Conduct Triangulation and Bundle Adjustment
-
-    # If we want to keep the result in the format of COLMAP,
-    # please set return_in_pt3d = False,
-    # and get the rot and trans by
-    # BA_cameras.R, BA_cameras.T
     BA_cameras, extrinsics_opencv, intrinsics_opencv, points3D, reconstruction = triangulator(
         pred_cameras,
         pred_track,
@@ -321,10 +313,9 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     )
 
     # Switch back
-    # NOTE we changed the image order previously, now we need to switch it back
+    # NOTE we changed the image order previously, now we need to switch it back    
+    
     import pdb;pdb.set_trace()
-    
-    
     print("you have to switch it back!")
     predictions["pred_cameras"] = BA_cameras
     predictions["extrinsics_opencv"] = extrinsics_opencv
@@ -333,6 +324,8 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     predictions["reconstruction"] = reconstruction
 
     return predictions
+
+
 
 def predict_tracks(track_predictor, extractor, images, fmaps_for_tracker, query_frame_indexes, frame_num, device):
     pred_track_list = []
@@ -360,7 +353,12 @@ def predict_tracks(track_predictor, extractor, images, fmaps_for_tracker, query_
         pred_vis_list.append(pred_vis)
         pred_score_list.append(pred_score)
 
-    return pred_track_list, pred_vis_list, pred_score_list
+
+    pred_track = torch.cat(pred_track_list, dim=2)
+    pred_vis = torch.cat(pred_vis_list, dim=2)
+    pred_score = torch.cat(pred_score_list, dim=2)
+
+    return pred_track, pred_vis, pred_score
 
 
 def find_query_frame_indexes(reshaped_image, camera_predictor, query_frame_num, image_size=336):

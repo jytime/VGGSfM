@@ -19,8 +19,45 @@ from minipytorch3d.cameras import CamerasBase, PerspectiveCameras
 from minipytorch3d.rotation_conversions import matrix_to_quaternion, quaternion_to_matrix
 
 from ..utils.metric import closed_form_inverse_OpenCV
+from ..utils.triangulation import create_intri_matrix
 
 EPS = 1e-9
+
+
+def get_EFP(pred_cameras, image_size, B, S, default_focal=False):
+    """
+    Converting PyTorch3D cameras to extrinsics, intrinsics matrix
+
+    Return extrinsics, intrinsics, focal_length, principal_point
+    """
+    scale = image_size.min()
+
+    focal_length = pred_cameras.focal_length
+
+    principal_point = torch.zeros_like(focal_length)
+
+    focal_length = focal_length * scale / 2
+    principal_point = (image_size[None] - principal_point * scale) / 2
+
+    Rots = pred_cameras.R.clone()
+    Trans = pred_cameras.T.clone()
+
+    extrinsics = torch.cat([Rots, Trans[..., None]], dim=-1)
+
+    # reshape
+    extrinsics = extrinsics.reshape(B, S, 3, 4)
+    focal_length = focal_length.reshape(B, S, 2)
+    principal_point = principal_point.reshape(B, S, 2)
+
+    # only one dof focal length
+    if default_focal:
+        focal_length[:] = scale
+    else:
+        focal_length = focal_length.mean(dim=-1, keepdim=True).expand(-1, -1, 2)
+        focal_length = focal_length.clamp(0.2 * scale, 5 * scale)
+
+    intrinsics = create_intri_matrix(focal_length, principal_point)
+    return extrinsics, intrinsics, focal_length, principal_point
 
 
 def pose_encoding_to_camera(

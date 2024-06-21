@@ -38,6 +38,7 @@ from ..utils.triangulation import (
     global_BA,
     iterative_global_BA,
 )
+from .utils import get_EFP
 
 from ..utils.utils import transform_camera_relative_to_first
 
@@ -86,26 +87,28 @@ class Triangulator(nn.Module):
 
             image_size = torch.tensor([W, H], dtype=pred_tracks.dtype, device=device)
 
-            # OPTIONAL: make cameras relative to the first camera
-            pred_cameras = transform_camera_relative_to_first(pred_cameras, B * S)
-
-            # Convert the PyTorch3D cameras predicted by camera_predictor
-            # to the convention of OpenCV
-            # TODO: do not use PyTorch3D in VGGSfM v2
-
             # extrinsics: B x S x 3 x 4
             # intrinsics: B x S x 3 x 3
             # focal_length, principal_point : B x S x 2
-            extrinsics, intrinsics, focal_length, principal_point = pt3d_camera_to_opencv_EFP(
+            extrinsics, intrinsics, focal_length, principal_point = get_EFP(
                 pred_cameras, image_size, B, S
             )
+
+
+            extrinsics = extrinsics.double()
+            
+
+            
 
             # Normalize points by intrinsics
             tracks_normalized = (pred_tracks - principal_point.unsqueeze(-2)) / focal_length.unsqueeze(-2)
 
             # Get the fmat and the inliers
-            fmat_preliminary = preliminary_dict["fmat"]
-            inlier_fmat = inlier_by_fundamental(fmat_preliminary, pred_tracks, max_error=fmat_thres)
+            # import pdb;pdb.set_trace()
+            
+            inlier_fmat = preliminary_dict["fmat_inlier_mask"]
+            # fmat_preliminary = preliminary_dict["fmat"]
+            # inlier_fmat = inlier_by_fundamental(fmat_preliminary, pred_tracks, max_error=fmat_thres)
 
             # Visibility inlier
             inlier_vis = pred_vis > 0.05  # TODO: avoid hardcoded

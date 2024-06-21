@@ -1,8 +1,7 @@
-seed: 0
+seed: 1
 debug: false
-use_bf16: true
+mixed_precision: bf16
 query_frame_num: 3
-return_in_pt3d: true
 load_gt: false
 visualize: true
 fmat_thres: 2.0
