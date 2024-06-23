@@ -1,14 +1,18 @@
-seed: 1
+rawEFP: false
+seed: 128
 debug: false
+center_order: true
 mixed_precision: bf16
-query_frame_num: 3
+query_frame_num: 1
 load_gt: false
 visualize: true
 fmat_thres: 2.0
 init_max_reproj_error: 2.0
 max_query_pts: 4096
-SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/s06_sample
+comple_nonvis: false
+SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/374_42274_84517
 resume_ckpt: /data/home/jianyuan/OpenSource/VGGSfM/tmp/vggsfm_v103.bin
+query_method: sp+sift
 use_poselib: true
 max_ransac_iters: 4096
 MODEL:

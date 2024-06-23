@@ -1,4 +1,3 @@
-
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
@@ -29,7 +28,7 @@ from pytorch3d.renderer.cameras import CamerasBase, PerspectiveCameras
 
 
 # #####################
-# from ..two_view_geo.utils import inlier_by_fundamental
+from ..two_view_geo.utils import inlier_by_fundamental
 from ..utils.triangulation import (
     create_intri_matrix,
     triangulate_by_pair,
@@ -41,9 +40,10 @@ from ..utils.triangulation import (
 )
 from .utils import get_EFP
 
+from ..utils.utils import transform_camera_relative_to_first
 
 
-class Triangulator(nn.Module):
+class Triangulator_Simple(nn.Module):
     def __init__(self, cfg=None):
         super().__init__()
         """
@@ -67,9 +67,7 @@ class Triangulator(nn.Module):
         max_reproj_error=4,
         init_tri_angle_thres=16,
         min_valid_track_length=3,
-        image_paths=None,
         return_in_pt3d=True,
-        cfg= None,
     ):
         """
         Conduct triangulation and bundle adjustment given
@@ -88,39 +86,95 @@ class Triangulator(nn.Module):
             assert B == 1  # The released implementation now only supports batch=1 during inference
 
             image_size = torch.tensor([W, H], dtype=pred_tracks.dtype, device=device)
+
             # extrinsics: B x S x 3 x 4
             # intrinsics: B x S x 3 x 3
             # focal_length, principal_point : B x S x 2
-            
-            if cfg.rawEFP:
-                extrinsics, intrinsics, _, _ = pt3d_camera_to_opencv_EFP(
-                    pred_cameras, image_size, B, S
-                )
-            else:
-                extrinsics, intrinsics, _, _ = get_EFP(
-                    pred_cameras, image_size, B, S
-                )
-                
+            extrinsics, intrinsics, focal_length, principal_point = get_EFP(
+                pred_cameras, image_size, B, S
+            )
+
+
+
+
+
+
+
             extrinsics = extrinsics.double()
-            inlier_fmat = preliminary_dict["fmat_inlier_mask"]
             
 
-            # Remove B dim
-            # To simplify the code, now we only support B==1 during inference
             extrinsics = extrinsics[0]
             intrinsics = intrinsics[0]
             pred_tracks = pred_tracks[0]
+            # inlier = inlier[0]
+            # inlier_total = inlier_total[0]
             pred_vis = pred_vis[0]
             pred_score = pred_score[0]
-            inlier_fmat = inlier_fmat[0]
-            
-            
+            principal_point = principal_point[0]
+            focal_length = focal_length[0]
+            tracks_normalized = (pred_tracks - principal_point.unsqueeze(-2)) / focal_length.unsqueeze(-2)
+
+            # Conduct triangulation to all the frames
+            # We adopt LORANSAC here again
+            best_triangulated_points, best_inlier_num, best_inlier_mask = triangulate_tracks(
+                extrinsics, tracks_normalized, track_vis=pred_vis, track_score=pred_score, max_ransac_iters=128,
+                max_angular_error = 4, min_tri_angle=3, 
+            )
             
 
-            tracks_normalized = normalize_tracks(pred_tracks, intrinsics)
+            valid_tracks = best_inlier_num >= min_valid_track_length
+
+            points3D, extrinsics, intrinsics = global_BA(
+                best_triangulated_points,
+                valid_tracks,
+                pred_tracks,
+                best_inlier_mask,
+                extrinsics,
+                intrinsics,
+                image_size,
+                device,
+            )
+
+
+            
+            # %
+            
+            from pytorch3d.structures import Pointclouds
+            from pytorch3d.vis.plotly_vis import plot_scene
+            from pytorch3d.implicitron.tools import model_io, vis_utils
+
+            viz = vis_utils.get_visdom_connection(server=f"http://10.200.188.27", port=int(os.environ.get("VISDOM_PORT", 10088)))
+
+            # pcl = Pointclouds(points=best_triangulated_points[best_inlier_num>=3][None])
+            pcl = Pointclouds(points=points3D[None])
+            
+            visual_dict = {"scenes": {"points": pcl}}
+
+            fig = plot_scene(visual_dict, camera_scale=0.05)
+            
+            env_name = "debug"
+            print(f"saving to {env_name}")
+            viz.plotlyplot(fig, env=env_name, win="3D")
+
+
+
+            import pdb;pdb.set_trace()
+
+
+            ################################################################################################################
+            # Normalize points by intrinsics
+            tracks_normalized = (pred_tracks - principal_point.unsqueeze(-2)) / focal_length.unsqueeze(-2)
+
+            # Get the fmat and the inliers
+            # import pdb;pdb.set_trace()
+            
+            inlier_fmat = preliminary_dict["fmat_inlier_mask"]
+            # fmat_preliminary = preliminary_dict["fmat"]
+            # inlier_fmat = inlier_by_fundamental(fmat_preliminary, pred_tracks, max_error=fmat_thres)
+
             # Visibility inlier
             inlier_vis = pred_vis > 0.05  # TODO: avoid hardcoded
-            inlier_vis = inlier_vis[1:]
+            inlier_vis = inlier_vis[:, 1:]
 
             # Intersection of inlier_fmat and inlier_vis
             inlier = torch.logical_and(inlier_fmat, inlier_vis)
@@ -128,11 +182,10 @@ class Triangulator(nn.Module):
             # For initialization
             # we first triangulate a point cloud for each pair of query-reference images,
             # i.e., we have S-1 3D point clouds
-            # points_3d_pair: S-1 x N x 3
+            # points_3d_pair: B*(S-1) x N x 3
             points_3d_pair, cheirality_mask_pair, triangle_value_pair = triangulate_by_pair(
-                extrinsics[None], tracks_normalized[None]
+                extrinsics, tracks_normalized
             )
-
 
             # Check which point cloud can provide sufficient inliers
             # that pass the triangulation angle and cheirality check
@@ -160,33 +213,29 @@ class Triangulator(nn.Module):
                 init_tri_angle_thres = init_tri_angle_thres // 2
                 trial_count += 1
 
-            # (Pdb) inlier_num_per_frame
-            # tensor([ 604, 1817, 3303, 3641, 1167, 4651, 3985], device='cuda:0')
+            # Remove B dim
+            # To simplify the code, now we only support B==1 during inference
+            extrinsics = extrinsics[0]
+            intrinsics = intrinsics[0]
+            pred_tracks = pred_tracks[0]
+            inlier = inlier[0]
+            inlier_total = inlier_total[0]
+            pred_vis = pred_vis[0]
+            pred_score = pred_score[0]
 
-            # import pdb;pdb.set_trace()
-            
             # Conduct BA on the init point cloud and init pair
             points3D_init, extrinsics, intrinsics, track_init_mask, reconstruction, init_idx = init_BA(
                 extrinsics, intrinsics, pred_tracks, points_3d_pair, inlier_total, image_size, 
                 init_max_reproj_error=init_max_reproj_error
             )
-            
-            
 
             # Given we have a well-conditioned point cloud,
             # we can optimize all the cameras by absolute pose refinement as in
             # https://github.com/colmap/colmap/blob/4ced4a5bc72fca93a2ffaea2c7e193bc62537416/src/colmap/estimators/pose.cc#L207
             # Basically it is a bundle adjustment without optmizing 3D points
             # It is fine even this step fails
-            
-            # (pred_vis>0.01).sum(-1)
-            # import pdb;pdb.set_trace()
-            
             extrinsics, intrinsics, valid_intri_mask = refine_pose(
-                extrinsics, intrinsics, 
-                # inlier, 
-                inlier_vis,
-                points3D_init, pred_tracks, track_init_mask, image_size, init_idx
+                extrinsics, intrinsics, inlier, points3D_init, pred_tracks, track_init_mask, image_size, init_idx
             )
 
             # Well if an frame has an invalid intri after optimization
@@ -296,18 +345,3 @@ def pt3d_camera_to_opencv_EFP(pred_cameras, image_size, B, S):
 
     intrinsics = create_intri_matrix(focal_length, principal_point)
     return extrinsics, intrinsics, focal_length, principal_point
-
-
-def normalize_tracks(pred_tracks, intrinsics):
-    """
-    Normalize predicted tracks based on camera intrinsics.
-    Args:
-    intrinsics (torch.Tensor): The camera intrinsics tensor of shape [batch_size, 3, 3].
-    pred_tracks (torch.Tensor): The predicted tracks tensor of shape [batch_size, num_tracks, 2].
-    Returns:
-    torch.Tensor: Normalized tracks tensor.
-    """
-    principal_point = intrinsics[:, [0, 1], [2, 2]].unsqueeze(-2)
-    focal_length = intrinsics[:, [0, 1], [0, 1]].unsqueeze(-2)
-    tracks_normalized = (pred_tracks - principal_point) / focal_length
-    return tracks_normalized

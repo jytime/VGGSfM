@@ -1,1 +1,4 @@
-- seed=1
+- center_order=True
+- use_poselib=True
+- seed=128
+- rawEFP=False

@@ -1,11 +1,24 @@
+# dropped
+# use_bf16: True
+# return_in_pt3d: False
+
+##############################################
+
+
+rawEFP: False
+
 hydra:
     run:
         dir: .
 
 seed: 0
 debug: False
+
+
+center_order: True
+
 mixed_precision: bf16
-query_frame_num: 3
+query_frame_num: 1
 # return_in_pt3d: True
 load_gt: False
 visualize: True
@@ -13,9 +26,15 @@ fmat_thres: 2.0
 init_max_reproj_error: 2.0
 max_query_pts: 4096
 
-SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/s06_sample
+
+comple_nonvis: False
+
+# SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/s06_sample
+SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/374_42274_84517
 resume_ckpt:  /data/home/jianyuan/OpenSource/VGGSfM/tmp/vggsfm_v103.bin
 
+
+query_method: "sp+sift"
 
 use_poselib: True
 max_ransac_iters: 4096
@@ -60,5 +79,6 @@ MODEL:
 
     TRIANGULAE:
         _target_: vggsfm.models.Triangulator
+        # _target_: vggsfm.models.Triangulator_Simple
     
 

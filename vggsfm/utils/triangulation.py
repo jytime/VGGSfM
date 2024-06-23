@@ -63,18 +63,7 @@ def triangulate_by_pair(extrinsics, tracks_normalized, eps=1e-12):
     tracks_normalized_pair = tracks_normalized_pair.reshape(B * (S - 1), 2, N, 2)
 
     # triangulate
-    points_3d_pair = triangulate_multi_view_point_from_tracks(extrinsics_pair, tracks_normalized_pair)
-
-    # check cheirality
-    depths1 = calculate_depth_batch(extrinsics_pair[:, 0], points_3d_pair)
-    depths2 = calculate_depth_batch(extrinsics_pair[:, 1], points_3d_pair)
-
-    kMinDepth = torch.finfo(extrinsics_pair.dtype).eps
-    max_depth = 1000.0 * torch.linalg.norm(
-        extrinsics_pair[:, 1, :3, :3].transpose(-2, -1) @ extrinsics_pair[:, 1, :3, 3:4], dim=1
-    )
-
-    cheirality_mask = (depths1 > kMinDepth) & (depths1 < max_depth) & (depths2 > kMinDepth) & (depths2 < max_depth)
+    points_3d_pair, cheirality_mask = triangulate_multi_view_point_from_tracks(extrinsics_pair, tracks_normalized_pair)
 
     # check triangulation angles
     # B*(S-1)x3x1
@@ -341,11 +330,12 @@ def triangulate_multi_view_point_from_tracks(cams_from_world, tracks, mask=None)
         cams_from_world = cams_from_world[:, None].expand(-1, N, -1, -1, -1)
         cams_from_world = cams_from_world.reshape(B * N, S, 3, 4)
 
-        points3d = triangulate_multi_view_point_batched(cams_from_world, tracks, mask)
+        points3d, invalid_cheirality_mask = triangulate_multi_view_point_batched(cams_from_world, tracks, mask, check_cheirality=True)
 
         points3d = points3d.reshape(B, N, 3)
-
-        return points3d
+        invalid_cheirality_mask = invalid_cheirality_mask.reshape(B, N)
+        cheirality_mask = ~invalid_cheirality_mask
+        return points3d, cheirality_mask
 
 
 def triangulate_tracks(
@@ -424,7 +414,11 @@ def triangulate_tracks(
 
         # Also, we hope the tracks also meet the visibility and score requirement
         # logical_or: invalid if does not meet any requirement
-        invalid_vis_conf_mask = torch.logical_or(track_vis <= 0.05, track_score <= 0.5)
+        if track_score is not None:
+            invalid_vis_conf_mask = torch.logical_or(track_vis <= 0.05, track_score <= 0.5)
+        else:
+            invalid_vis_conf_mask = track_vis <= 0.05
+            
         invalid_vis_conf_mask = invalid_vis_conf_mask.permute(1, 0)
         angular_error[invalid_vis_conf_mask[:, None].expand(-1, max_ransac_iters, -1)] += torch.pi
 

@@ -108,20 +108,21 @@ def pose_encoding_to_camera(
         abs_T[:, :2] *= -1
         R = R.permute(0, 2, 1)
 
-        extrinsics_4x4 = torch.eye(4, 4).to(R.dtype).to(R.device)
-        extrinsics_4x4 = extrinsics_4x4[None].repeat(len(R), 1, 1)
-        
-        extrinsics_4x4[:,:3,:3] = R.clone()
-        extrinsics_4x4[:,:3,3] = abs_T.clone()
+        if False:
+            extrinsics_4x4 = torch.eye(4, 4).to(R.dtype).to(R.device)
+            extrinsics_4x4 = extrinsics_4x4[None].repeat(len(R), 1, 1)
+            
+            extrinsics_4x4[:,:3,:3] = R.clone()
+            extrinsics_4x4[:,:3,3] = abs_T.clone()
 
-        rel_transform = closed_form_inverse_OpenCV(extrinsics_4x4[0:1])
-        rel_transform = rel_transform.expand(len(extrinsics_4x4), -1, -1)
-        
-        # relative to the first camera
-        extrinsics_4x4 = torch.bmm(rel_transform, extrinsics_4x4)
+            rel_transform = closed_form_inverse_OpenCV(extrinsics_4x4[0:1])
+            rel_transform = rel_transform.expand(len(extrinsics_4x4), -1, -1)
+            
+            # relative to the first camera
+            extrinsics_4x4 = torch.bmm(rel_transform, extrinsics_4x4)
 
-        R = extrinsics_4x4[:,:3,:3]
-        abs_T = extrinsics_4x4[:,:3,3] 
+            R = extrinsics_4x4[:,:3,:3]
+            abs_T = extrinsics_4x4[:,:3,3] 
 
     if return_dict:
         return {"focal_length": focal_length, "R": R, "T": abs_T}
