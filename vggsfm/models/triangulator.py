@@ -34,6 +34,7 @@ from ..utils.triangulation import (
     create_intri_matrix,
     triangulate_by_pair,
     init_BA,
+    init_refine_pose,
     refine_pose,
     triangulate_tracks,
     global_BA,
@@ -104,7 +105,6 @@ class Triangulator(nn.Module):
             extrinsics = extrinsics.double()
             inlier_fmat = preliminary_dict["fmat_inlier_mask"]
             
-
             # Remove B dim
             # To simplify the code, now we only support B==1 during inference
             extrinsics = extrinsics[0]
@@ -123,7 +123,7 @@ class Triangulator(nn.Module):
             inlier_vis = inlier_vis[1:]
 
             # Intersection of inlier_fmat and inlier_vis
-            inlier = torch.logical_and(inlier_fmat, inlier_vis)
+            inlier_geo_vis = torch.logical_and(inlier_fmat, inlier_vis)
 
             # For initialization
             # we first triangulate a point cloud for each pair of query-reference images,
@@ -136,13 +136,13 @@ class Triangulator(nn.Module):
 
             # Check which point cloud can provide sufficient inliers
             # that pass the triangulation angle and cheirality check
-            # Pick the highest inlier one as the initial point cloud
+            # Pick the highest inlier_geo_vis one as the initial point cloud
             trial_count = 0
             while trial_count < 5:
                 # If no success, relax the constraint
                 # try at most 5 times
                 triangle_mask = triangle_value_pair >= init_tri_angle_thres
-                inlier_total = torch.logical_and(inlier, cheirality_mask_pair)
+                inlier_total = torch.logical_and(inlier_geo_vis, cheirality_mask_pair)
                 inlier_total = torch.logical_and(inlier_total, triangle_mask)
                 inlier_num_per_frame = inlier_total.sum(dim=-1)
 
@@ -160,11 +160,7 @@ class Triangulator(nn.Module):
                 init_tri_angle_thres = init_tri_angle_thres // 2
                 trial_count += 1
 
-            # (Pdb) inlier_num_per_frame
-            # tensor([ 604, 1817, 3303, 3641, 1167, 4651, 3985], device='cuda:0')
 
-            # import pdb;pdb.set_trace()
-            
             # Conduct BA on the init point cloud and init pair
             points3D_init, extrinsics, intrinsics, track_init_mask, reconstruction, init_idx = init_BA(
                 extrinsics, intrinsics, pred_tracks, points_3d_pair, inlier_total, image_size, 
@@ -179,28 +175,27 @@ class Triangulator(nn.Module):
             # Basically it is a bundle adjustment without optmizing 3D points
             # It is fine even this step fails
             
-            # (pred_vis>0.01).sum(-1)
-            # import pdb;pdb.set_trace()
-            
-            extrinsics, intrinsics, valid_intri_mask = refine_pose(
+            extrinsics, intrinsics, valid_intri_mask = init_refine_pose(
                 extrinsics, intrinsics, 
-                # inlier, 
-                inlier_vis,
+                inlier_geo_vis, 
                 points3D_init, pred_tracks, track_init_mask, image_size, init_idx
             )
+            
+            
 
             # Well if an frame has an invalid intri after optimization
             # e.g., minus focal length
             # we assume its correspondences are wrong, and ignore all of them in the following BA
             # this usually happens when the frames are highly symmetric or "doppelgangers”
-            pred_vis[~valid_intri_mask] = 0
+            # pred_vis[~valid_intri_mask] = 0
 
             # TODO: well we may have some bugs here, do we?
             # TODO: keep the optimized 3D points
 
-            principal_point_refined = intrinsics[:, [0, 1], [2, 2]].unsqueeze(-2)
-            focal_length_refined = intrinsics[:, [0, 1], [0, 1]].unsqueeze(-2)
-            tracks_normalized_refined = (pred_tracks - principal_point_refined) / focal_length_refined
+            tracks_normalized_refined = normalize_tracks(pred_tracks, intrinsics)
+            # principal_point_refined = intrinsics[:, [0, 1], [2, 2]].unsqueeze(-2)
+            # focal_length_refined = intrinsics[:, [0, 1], [0, 1]].unsqueeze(-2)
+            # tracks_normalized_refined = (pred_tracks - principal_point_refined) / focal_length_refined
 
             # Conduct triangulation to all the frames
             # We adopt LORANSAC here again
@@ -220,6 +215,18 @@ class Triangulator(nn.Module):
                 image_size,
                 device,
             )
+
+            if cfg.robust_refine:
+                # Helpful for some turnable videos
+                extrinsics, intrinsics, valid_intri_mask = refine_pose(
+                    extrinsics, intrinsics, 
+                    pred_vis > 0.05, 
+                    points3D, pred_tracks, valid_tracks, image_size
+                )
+                import pdb;pdb.set_trace()
+                print("another BA here please")
+            
+
 
             try:
                 ba_options = pycolmap.BundleAdjustmentOptions()

@@ -156,8 +156,8 @@ def test_fn(cfg: DictConfig):
 
         if cfg.visualize:
             pcl = Pointclouds(points=predictions["points3D"][None])
-            # visual_dict = {"scenes": {"points": pcl, "cameras": pred_cameras}}
-            visual_dict = {"scenes": {"points": pcl}}
+            visual_dict = {"scenes": {"points": pcl, "cameras": pred_cameras}}
+            # visual_dict = {"scenes": {"points": pcl}}
 
             fig = plot_scene(visual_dict, camera_scale=0.05)
             
@@ -269,11 +269,13 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
 
             if len(non_vis_frames)>0:
                 # if a frame has too few visible inlier, use it as a query  
-                pred_track_comple, pred_vis_comple, pred_score_comple = predict_tracks(track_predictor, images, fmaps_for_tracker, non_vis_frames, 
+                pred_track_comple, pred_vis_comple, pred_score_comple = predict_tracks(track_predictor, images, 
+                                                                fmaps_for_tracker, non_vis_frames, 
                                                                 frame_num, device, cfg)
                 pred_track = torch.cat([pred_track, pred_track_comple], dim=2)
                 pred_vis = torch.cat([pred_vis, pred_vis_comple], dim=2)
                 pred_score = torch.cat([pred_score, pred_score_comple], dim=2)
+                
                 
         ########################################################################
         if False:

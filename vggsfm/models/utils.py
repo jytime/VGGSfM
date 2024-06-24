@@ -104,25 +104,29 @@ def pose_encoding_to_camera(
     if to_OpenCV:
         ### From Pytorch3D coordinate to OpenCV coordinate:
         # I hate coordinate conversion
+        R = R.clone()
+        abs_T = abs_T.clone()
         R[:, :, :2] *= -1
         abs_T[:, :2] *= -1
         R = R.permute(0, 2, 1)
 
-        if False:
-            extrinsics_4x4 = torch.eye(4, 4).to(R.dtype).to(R.device)
-            extrinsics_4x4 = extrinsics_4x4[None].repeat(len(R), 1, 1)
-            
-            extrinsics_4x4[:,:3,:3] = R.clone()
-            extrinsics_4x4[:,:3,3] = abs_T.clone()
+        extrinsics_4x4 = torch.eye(4, 4).to(R.dtype).to(R.device)
+        extrinsics_4x4 = extrinsics_4x4[None].repeat(len(R), 1, 1)
+        
+        extrinsics_4x4[:,:3,:3] = R.clone()
+        extrinsics_4x4[:,:3,3] = abs_T.clone()
 
-            rel_transform = closed_form_inverse_OpenCV(extrinsics_4x4[0:1])
-            rel_transform = rel_transform.expand(len(extrinsics_4x4), -1, -1)
-            
-            # relative to the first camera
-            extrinsics_4x4 = torch.bmm(rel_transform, extrinsics_4x4)
+        rel_transform = closed_form_inverse_OpenCV(extrinsics_4x4[0:1])
+        rel_transform = rel_transform.expand(len(extrinsics_4x4), -1, -1)
+        
+        # relative to the first camera
+        # NOTE it is extrinsics_4x4 x rel_transform instead of rel_transform x extrinsics_4x4
+        # this is different in opencv / pytorch3d convention
+        extrinsics_4x4 = torch.bmm(extrinsics_4x4, rel_transform)
 
-            R = extrinsics_4x4[:,:3,:3]
-            abs_T = extrinsics_4x4[:,:3,3] 
+        R = extrinsics_4x4[:,:3,:3].clone()
+        abs_T = extrinsics_4x4[:,:3,3].clone()
+
 
     if return_dict:
         return {"focal_length": focal_length, "R": R, "T": abs_T}

@@ -112,14 +112,11 @@ hydra:
     hydra:
     - hydra.mode=RUN
     task:
-    - center_order=True
-    - use_poselib=True
-    - seed=128
-    - rawEFP=False
+    - comple_nonvis=True
   job:
     name: demo
     chdir: null
-    override_dirname: center_order=True,rawEFP=False,seed=128,use_poselib=True
+    override_dirname: comple_nonvis=True
     id: ???
     num: ???
     config_name: demo
