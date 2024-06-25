@@ -112,14 +112,11 @@ hydra:
     hydra:
     - hydra.mode=RUN
     task:
-    - comple_nonvis=True
-    - BA_iters=2
-    - robust_refine=3
-    - max_query_pts=2048
+    - SCENE_DIR=examples/british_museum
   job:
     name: demo
     chdir: null
-    override_dirname: BA_iters=2,comple_nonvis=True,max_query_pts=2048,robust_refine=3
+    override_dirname: SCENE_DIR=examples/british_museum
     id: ???
     num: ???
     config_name: demo

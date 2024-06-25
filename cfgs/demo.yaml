@@ -5,11 +5,13 @@ hydra:
 seed: 0
 img_size: 1024
 
-viz_ip: 
+viz_ip: 10.200.188.27
+# 127.0.0.1
+
 debug: False
 
 center_order: True
-mixed_precision: bf16
+mixed_precision: fp16
 extract_color: True
 
 
@@ -20,16 +22,16 @@ BA_iters: 2
 
 
 load_gt: False
-visualize: True
+visualize: False
 fmat_thres: 4.0
 init_max_reproj_error: 4.0
 max_query_pts: 4096
 
 
 
+SCENE_DIR: examples/apple
 
-SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/drive
-
+# SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/drive
 # SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/s06_sample
 # SEQ_DIR: /data/home/jianyuan/OpenSource/VGGSfM/tmp/374_42274_84517
 resume_ckpt:  /data/home/jianyuan/OpenSource/VGGSfM/tmp/vggsfm_v103.bin

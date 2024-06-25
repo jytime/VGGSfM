@@ -52,7 +52,7 @@ class Triangulator(nn.Module):
         """
         The module for triangulation and BA adjustment 
         
-        NOTE In VGGSfM v1.1, we remove the learnable parameters of Triangulator
+        NOTE After VGGSfM v1.1, we remove the learnable parameters of Triangulator
         """
         self.cfg = cfg
 
@@ -274,20 +274,9 @@ class Triangulator(nn.Module):
                 from vggsfm.models.utils import sample_features4d
                 pred_track_rgb = sample_features4d(images.squeeze(0), pred_tracks)
                 valid_track_rgb = pred_track_rgb[:, valid_tracks]
-
                 
-                if True:
-                    # extract color by average
-                    sum_rgb = (BA_inlier_masks.float()[..., None] * valid_track_rgb).sum(dim=0)
-                    points3D_rgb = sum_rgb/BA_inlier_masks.sum(dim=0)[:,None]                    
-                else:
-                    # extract color by first valid 2D point
-                    first_true_indices = torch.argmax(BA_inlier_masks.int(), dim=0)
-                    tmpcolormask = torch.zeros_like(BA_inlier_masks)
-                    rows = torch.arange(BA_inlier_masks.shape[1])
-                    tmpcolormask[first_true_indices, rows] = True
-                    points3D_rgb = valid_track_rgb[tmpcolormask]
-
+                sum_rgb = (BA_inlier_masks.float()[..., None] * valid_track_rgb).sum(dim=0)
+                points3D_rgb = sum_rgb/BA_inlier_masks.sum(dim=0)[:,None]                    
             else:
                 points3D_rgb = None
             

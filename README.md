@@ -13,11 +13,13 @@
 <p 
 dir="auto">[<a href="https://arxiv.org/pdf/2312.04563.pdf" rel="nofollow">Paper</a>]
 [<a href="https://vggsfm.github.io/" rel="nofollow">Project Page</a>] 
-[Version 1.1]
+[Version 2.0]
 </p> 
 
 
 **Updates:**
+- [Jun 235, 2024] Upgrade to VGGSfM 2.0! More memory efficient, more robust, more powerful, and easier to start!
+
 
 - [Apr 23, 2024] Release the code and model weight for VGGSfM v1.1.
 
@@ -31,60 +33,59 @@ We provide a simple installation script that, by default, sets up a conda enviro
 source install.sh
 ```
 
-## Testing on IMC
+This script installs official pytorch3d, accelerate, lightglue, pycolmap, and visdom. Besides, it will also (optionally) install [poselib](https://github.com/PoseLib/PoseLib) using the python wheel under the folder ```wheels```, which is compiled by us instead of the official poselib team. 
 
-### 1. Download Dataset and Model
+## Demo 
 
-To get started, you'll need to download the IMC dataset. You can do this by running the following commands in your terminal:
+### 1. Download Model
+To get started, you need to first download the checkpoint. We provide the checkpoint for v2.0 model by [Hugging Face](https://huggingface.co/facebook/VGGSfM/blob/main/vggsfm_v2_0_0.bin) and [Google Drive](https://drive.google.com/file/d/163bHiqeTJhQ2_UnihRNPRA4Y9X8-gZ1-/view?usp=sharing).
 
-```bash
-wget https://www.cs.ubc.ca/research/kmyi_data/imc2021-public/imc-2021-test-gt-phototourism.tar.gz
+### 2. Run the Demo 
 
-tar -xzvf imc-2021-test-gt-phototourism.tar.gz
-```
-
-Once the dataset is downloaded and extracted, you'll need to specify its path in the ```IMC_DIR``` field in the ./cfgs/test.yaml configuration file or give it as an input such as ```python test.py IMC_DIR=YOUR/PATH```.
-
-Next, you'll need to download the model checkpoint of [v1.1](https://drive.google.com/file/d/1eSJDMj7tWsM2FzVZAiWYSpvm5bSUIZwq/view?usp=sharing) for testing or [v1.2](https://drive.google.com/file/d/1WEGN0RpDqynOnxI18hXlxzeQTqdX5lkA/view?usp=sharing) for demo. If you are interested in comparing different methods following the standard setting (as in our paper), v1.1 should be the one for fair comparison. If you want to apply our method for demo/downstream applications, it is quite likely v1.2 should be the better choice.
-
-
-After downloading the model checkpoint, specify its path in the ```resume_ckpt``` field in ./cfgs/test.yaml.
-
-
-### 2. Run Testing
+Now time to enjoy your 3D reconstruction! You can start by our provided examples, such as:
 
 ```bash
-python test.py
+python demo.py SCENE_DIR=examples/cake resume_ckpt=/PATH/YOUR/CKPT 
+
+python demo.py SCENE_DIR=examples/british_museum query_frame_num=2 resume_ckpt=/PATH/YOUR/CKPT 
+
+python demo.py SCENE_DIR=examples/apple query_frame_num=5 max_query_pts=2048 resume_ckpt=/PATH/YOUR/CKPT 
 ```
 
-When it finishes (it would take several hours to complete the testing on the whole IMC dataset), you should see something like:
+All the flags are defaulted in ```cfgs/demo.yaml```. Feel free to modify it yourself.
+
+The reconstruction result (camera parameters and 3D points) will be automatically saved in the COLMAP format at ```output/seq_name```. You can use the COLMAP viewer to check them. 
+
+If you want to visualize it more easily, we provide an approach supported by [visdom](https://github.com/fossasia/visdom). To begin using Visdom, start the server by entering visdom in the command line. Once the server is running, access Visdom by navigating to http://localhost:8097 in your web browser. Now every reconstruction will be visualized and saved to the visdom server by enabling ```visualize=True```:
 
 ```bash
-----------------------------------------------------------------------------------------------------
-On the IMC dataset (query_frame_num=3)
-Auc_3  (%): 64.74418604651163
-Auc_5  (%): 72.20720930232558
-Auc_10 (%): 80.98441860465115
-----------------------------------------------------------------------------------------------------
+python demo.py visualize=True ...(other flags)
 ```
 
-If your machine support ```torch.bfloat16```, you are welcome to enable the ```use_bf16``` option in the configuration file or by ```python test.py use_bf16=True```. Our model was trained using bf16 and the testing performance is nearly identical when using bf16.
+By doing so, you should see an interface such as:
 
-Typically, running our model on a 25-frame IMC scene takes approximately 40 seconds. If you're looking to save time, you can adjust the ```query_frame_num``` to 1. This adjustment reduces the inference time to roughly 15 seconds, while maintaining a comparable performance.
+![UI](assets/ui.png)
 
+
+
+### 3. Try your own data
+
+You only need to specify the address of your data, such as:
 
 ```bash
-----------------------------------------------------------------------------------------------------
-On the IMC dataset (query_frame_num=1)
-Auc_3  (%): 61.99207579672695
-Auc_5  (%): 69.78997416020671
-Auc_10 (%): 78.88826873385013
-----------------------------------------------------------------------------------------------------
+python demo.py SCENE_DIR=examples/YOUR_FOLDER ...(other flags)
 ```
 
+Please ensure that the images are stored in ```YOUR_FOLDER/images```. This folder should contain only the images. Check the ```examples``` folder for the desired data structure.
 
 
-If want to run the model on your own data, please check the ```run_one_scene``` function in ```test.py```. We are also going to provide a demo file for it very soon. The default output cameras of ```run_one_scene``` follows the PyTorch3D convention. You can set ```return_in_pt3d=False``` to let it return in COLMAP convention. 
+Have fun and feel free to create an issue if you meet any problem. SfM is always about corner/hard cases. I am happy to help. If you prefer not to share your images publicly, please send them to me by email.
+
+
+
+## Testing 
+
+We are still preparing the testing script for VGGSfM v2. However, you can use our code for VGGSfM v1.1 to reproduce our benchmark results in the paper. Please refer to the branch ```v1.1```.
 
 
 ## Acknowledgement

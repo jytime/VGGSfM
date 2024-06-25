@@ -8,5 +8,3 @@ from .track_predictor import TrackerPredictor
 from .camera_predictor import CameraPredictor
 from .triangulator import Triangulator
 
-
-from .triangulator_simple import Triangulator_Simple

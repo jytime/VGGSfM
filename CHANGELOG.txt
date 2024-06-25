@@ -2,7 +2,6 @@ VGGSfM 2.0
 
 * More powerful camera and track predictor
 * Save the GPU memory usage by around 50%
-* Totally Remove PyTorch3D
 * Add Poselib as an option for Fundamental Matrix Estimation
 * Support COLMAP-tyle output
 * Provide focal length in pixel 

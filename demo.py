@@ -13,7 +13,6 @@ import torch.nn.functional as F
 import numpy as np
 from torch.cuda.amp import autocast
 import hydra
-from visdom import Visdom
 
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
@@ -22,9 +21,12 @@ from lightglue import LightGlue, SuperPoint, SIFT, ALIKED
 
 import pycolmap
 
-from minipytorch3d.cameras import PerspectiveCameras
+from visdom import Visdom
 
-from vggsfm.datasets.sequence_loader import SequenceLoader
+from pytorch3d.renderer.cameras import CamerasBase, PerspectiveCameras
+
+
+from vggsfm.datasets.demo_loader import DemoLoader
 from vggsfm.two_view_geo.estimate_preliminary import estimate_preliminary_cameras
 
 try:
@@ -64,8 +66,8 @@ def demo_fn(cfg: DictConfig):
     model = model.to(device)
 
     # Prepare test dataset
-    test_dataset = SequenceLoader(
-        SEQ_DIR=cfg.SEQ_DIR, img_size=cfg.img_size, normalize_cameras=False, load_gt=cfg.load_gt, cfg=cfg
+    test_dataset = DemoLoader(
+        SCENE_DIR=cfg.SCENE_DIR, img_size=cfg.img_size, normalize_cameras=False, load_gt=cfg.load_gt, cfg=cfg
     )
 
     if cfg.resume_ckpt:
@@ -77,10 +79,13 @@ def demo_fn(cfg: DictConfig):
     if cfg.visualize:
         from pytorch3d.structures import Pointclouds
         from pytorch3d.vis.plotly_vis import plot_scene
-        from pytorch3d.implicitron.tools import model_io, vis_utils
+        
+        # viz = Visdom()
 
+
+        from pytorch3d.implicitron.tools import model_io, vis_utils
         viz = vis_utils.get_visdom_connection(
-            server=f"http://10.200.188.27", port=int(os.environ.get("VISDOM_PORT", 10088))
+            server=f"http://{cfg.viz_ip}", port=int(os.environ.get("VISDOM_PORT", 10088))
         )
 
     sequence_list = test_dataset.sequence_list
@@ -140,14 +145,11 @@ def demo_fn(cfg: DictConfig):
 
         # Export prediction as colmap format
         reconstruction_pycolmap = predictions["reconstruction"]
-        output_path = os.path.join(seq_name, "output")
-        print(f"The output has been saved to {output_path} in COLMAP style")
+        output_path = os.path.join("output", seq_name)
+        print("-"*50)
+        print(f"The output has been saved in COLMAP style at: {output_path} ")
         os.makedirs(output_path, exist_ok=True)
         reconstruction_pycolmap.write(output_path)
-
-        with open(os.path.join(output_path, "file_order.txt"), "w") as file:
-            for s in image_paths:
-                file.write(s + "\n")  # Write each string with a newline
 
         pred_cameras_PT3D = predictions["pred_cameras_PT3D"]
 
@@ -161,11 +163,19 @@ def demo_fn(cfg: DictConfig):
 
             fig = plot_scene(visual_dict, camera_scale=0.05)
             
-            env_name = "demo_visual"
-            print(f"saving to {env_name}")
+            env_name = f"demo_visual_{seq_name}"
+            print(f"Visualizing the scene by visdom at env: {env_name}")
             viz.plotlyplot(fig, env=env_name, win="3D")
 
+
     return True
+
+
+
+
+
+
+
 
 
 def run_one_scene(model, images, crop_params=None, query_frame_num=3, image_paths=None, dtype=None, cfg=None):
@@ -230,20 +240,6 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, image_path
 
 
                 
-        ########################################################################
-        if False:
-            from vggsfm.utils.visual import visualize_track
-            from pytorch3d.implicitron.tools import model_io, vis_utils
-
-            viz = vis_utils.get_visdom_connection(
-                server=f"http://10.200.188.27", port=int(os.environ.get("VISDOM_PORT", 10088))
-            )
-            
-            predictions= {}
-            predictions["pred_tracks"] = pred_track_comple
-            predictions["pred_vis"] = pred_vis_comple
-            visualize_track(predictions, images, None, None, cfg, 0, viz, n_points=4096, selected_indices=None, total_points=4096, save_dir=None, visual_gt = False, )
-
     torch.cuda.empty_cache()
 
     # If necessary, force all the predictions at the padding areas as non-visible
@@ -260,7 +256,6 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, image_path
         pred_vis = pred_vis * force_vis.float()
 
     # TODO: plot 2D matches
-    
     if cfg.use_poselib:
         estimate_preliminary_cameras_fn = estimate_preliminary_cameras_poselib
     else:
@@ -326,6 +321,8 @@ def predict_tracks(query_method, max_query_pts, track_predictor, images, fmaps_f
     pred_score_list = []
 
     for query_index in query_frame_indexes:
+        print(f"Predicting tracks with query_index = {query_index}")
+        
         # Find query_points at the query frame
         query_points = get_query_points(images[:, query_index], query_method, max_query_pts)
 
