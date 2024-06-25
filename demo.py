@@ -40,11 +40,10 @@ from vggsfm.utils.utils import (
     calculate_index_mappings,
     switch_tensor_order,
 )
-from vggsfm.utils.metric import camera_to_rel_deg, calculate_auc, calculate_auc_np
 
 
 @hydra.main(config_path="cfgs/", config_name="demo")
-def test_fn(cfg: DictConfig):
+def demo_fn(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
 
     # Print configuration
@@ -66,7 +65,7 @@ def test_fn(cfg: DictConfig):
 
     # Prepare test dataset
     test_dataset = SequenceLoader(
-        SEQ_DIR=cfg.SEQ_DIR, img_size=1024, normalize_cameras=False, load_gt=cfg.load_gt, cfg=cfg
+        SEQ_DIR=cfg.SEQ_DIR, img_size=cfg.img_size, normalize_cameras=False, load_gt=cfg.load_gt, cfg=cfg
     )
 
     if cfg.resume_ckpt:
@@ -74,8 +73,6 @@ def test_fn(cfg: DictConfig):
         checkpoint = torch.load(cfg.resume_ckpt)
         model.load_state_dict(checkpoint, strict=True)
         print(f"Successfully resumed from {cfg.resume_ckpt}")
-
-    error_dict = {"rError": [], "tError": []}
 
     if cfg.visualize:
         from pytorch3d.structures import Pointclouds
@@ -85,7 +82,6 @@ def test_fn(cfg: DictConfig):
         viz = vis_utils.get_visdom_connection(
             server=f"http://10.200.188.27", port=int(os.environ.get("VISDOM_PORT", 10088))
         )
-        # viz = Visdom()
 
     sequence_list = test_dataset.sequence_list
 
@@ -145,6 +141,7 @@ def test_fn(cfg: DictConfig):
         # Export prediction as colmap format
         reconstruction_pycolmap = predictions["reconstruction"]
         output_path = os.path.join(seq_name, "output")
+        print(f"The output has been saved to {output_path} in COLMAP style")
         os.makedirs(output_path, exist_ok=True)
         reconstruction_pycolmap.write(output_path)
 
@@ -152,61 +149,26 @@ def test_fn(cfg: DictConfig):
             for s in image_paths:
                 file.write(s + "\n")  # Write each string with a newline
 
-        pred_cameras = predictions["pred_cameras"]
+        pred_cameras_PT3D = predictions["pred_cameras_PT3D"]
 
         if cfg.visualize:
-            pcl = Pointclouds(points=predictions["points3D"][None])
-            visual_dict = {"scenes": {"points": pcl, "cameras": pred_cameras}}
-            # visual_dict = {"scenes": {"points": pcl}}
+            if "points3D_rgb" in predictions:
+                pcl = Pointclouds(points=predictions["points3D"][None], features=predictions["points3D_rgb"][None])
+            else:
+                pcl = Pointclouds(points=predictions["points3D"][None])
+                
+            visual_dict = {"scenes": {"points": pcl, "cameras": pred_cameras_PT3D}}
 
             fig = plot_scene(visual_dict, camera_scale=0.05)
             
-            env_name = "demo_AAA"
+            env_name = "demo_visual"
             print(f"saving to {env_name}")
             viz.plotlyplot(fig, env=env_name, win="3D")
-
-        # For more details about error computation,
-        # You can refer to IMC benchmark
-        # https://github.com/ubc-vision/image-matching-benchmark/blob/master/utils/pack_helper.py
-
-        if cfg.load_gt:
-            # Compute the error
-            rel_rangle_deg, rel_tangle_deg = camera_to_rel_deg(pred_cameras, gt_cameras, device, batch_size)
-
-            print(f"    --  Mean Rot   Error (Deg) for this scene: {rel_rangle_deg.mean():10.2f}")
-            print(f"    --  Mean Trans Error (Deg) for this scene: {rel_tangle_deg.mean():10.2f}")
-
-            error_dict["rError"].extend(rel_rangle_deg.cpu().numpy())
-            error_dict["tError"].extend(rel_tangle_deg.cpu().numpy())
-
-    if cfg.load_gt:
-        rError = np.array(error_dict["rError"])
-        tError = np.array(error_dict["tError"])
-
-        # you can choose either calculate_auc/calculate_auc_np, they lead to the same result
-        Auc_30, normalized_histogram = calculate_auc_np(rError, tError, max_threshold=30)
-        Auc_3 = np.mean(np.cumsum(normalized_histogram[:3]))
-        Auc_5 = np.mean(np.cumsum(normalized_histogram[:5]))
-        Auc_10 = np.mean(np.cumsum(normalized_histogram[:10]))
-
-        print(f"Testing Done")
-
-        for _ in range(5):
-            print("-" * 100)
-
-        print("On the IMC dataset")
-        print(f"Auc_3  (%): {Auc_3 * 100}")
-        print(f"Auc_5  (%): {Auc_5 * 100}")
-        print(f"Auc_10 (%): {Auc_10 * 100}")
-        print(f"Auc_30 (%): {Auc_30 * 100}")
-
-        for _ in range(5):
-            print("-" * 100)
 
     return True
 
 
-def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_pt3d=True, image_paths=None, dtype=None, cfg=None):
+def run_one_scene(model, images, crop_params=None, query_frame_num=3, image_paths=None, dtype=None, cfg=None):
     """
     images have been normalized to the range [0, 1] instead of [0, 255]
     """
@@ -232,9 +194,6 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
 
     image_paths = [os.path.basename(imgpath) for imgpath in image_paths]
     
-    
-    
-    
     if cfg.center_order:
         # The code below switchs the first frame (frame 0) to the most common frame
         center_frame_index = query_frame_indexes[0]
@@ -258,24 +217,18 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
 
     # Predict tracks
     with autocast(dtype=dtype):
-        pred_track, pred_vis, pred_score = predict_tracks(track_predictor, images, fmaps_for_tracker, 
+        pred_track, pred_vis, pred_score = predict_tracks(cfg.query_method, cfg.max_query_pts,
+                                                          track_predictor, images, fmaps_for_tracker, 
                                                       query_frame_indexes, frame_num, device, cfg)
 
 
 
         if cfg.comple_nonvis:
-            print("using nonvis frames as queries")
-            non_vis_frames = torch.nonzero((pred_vis.squeeze(0)>0.05).sum(-1) < 100).squeeze(-1).tolist()
+            pred_track, pred_vis, pred_score = comple_nonvis_frames(track_predictor, images, fmaps_for_tracker, 
+                                                                    frame_num, device, pred_track, pred_vis, 
+                                                                    pred_score, 500,cfg=cfg)
 
-            if len(non_vis_frames)>0:
-                # if a frame has too few visible inlier, use it as a query  
-                pred_track_comple, pred_vis_comple, pred_score_comple = predict_tracks(track_predictor, images, 
-                                                                fmaps_for_tracker, non_vis_frames, 
-                                                                frame_num, device, cfg)
-                pred_track = torch.cat([pred_track, pred_track_comple], dim=2)
-                pred_vis = torch.cat([pred_vis, pred_vis_comple], dim=2)
-                pred_score = torch.cat([pred_score, pred_score_comple], dim=2)
-                
+
                 
         ########################################################################
         if False:
@@ -326,7 +279,7 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
         tracks_score=pred_score,
         max_error = cfg.fmat_thres,
         loopresidual=True,
-        max_ransac_iters=cfg.max_ransac_iters,
+        # max_ransac_iters=cfg.max_ransac_iters,
     )
     
     pose_predictions = camera_predictor(reshaped_image, batch_size=batch_num)
@@ -334,42 +287,47 @@ def run_one_scene(model, images, crop_params=None, query_frame_num=3, return_in_
     pred_cameras = pose_predictions["pred_cameras"]
 
     # Conduct Triangulation and Bundle Adjustment
-    BA_cameras, extrinsics_opencv, intrinsics_opencv, points3D, reconstruction = triangulator(
+    BA_cameras_PT3D, extrinsics_opencv, intrinsics_opencv, points3D, points3D_rgb, reconstruction, valid_frame_mask= triangulator(
         pred_cameras,
         pred_track,
         pred_vis,
         images,
         preliminary_dict,
         image_paths=image_paths,
+        crop_params=crop_params,
         pred_score=pred_score,
-        return_in_pt3d=return_in_pt3d,
         fmat_thres=cfg.fmat_thres,
+        BA_iters=cfg.BA_iters,
         init_max_reproj_error=cfg.init_max_reproj_error,
         cfg= cfg,
     )
+    
+    
+    if cfg.center_order:
+        # NOTE we changed the image order previously, now we need to switch it back    
+        BA_cameras_PT3D = BA_cameras_PT3D[center_order]
+        extrinsics_opencv = extrinsics_opencv[center_order]
+        intrinsics_opencv = intrinsics_opencv[center_order]
 
-    # Switch back
-    # NOTE we changed the image order previously, now we need to switch it back    
-    # import pdb;pdb.set_trace()
-    print("you have to switch it back!")
-    predictions["pred_cameras"] = BA_cameras
+
+    predictions["pred_cameras_PT3D"] = BA_cameras_PT3D
     predictions["extrinsics_opencv"] = extrinsics_opencv
     predictions["intrinsics_opencv"] = intrinsics_opencv
     predictions["points3D"] = points3D
+    predictions["points3D_rgb"] = points3D_rgb
     predictions["reconstruction"] = reconstruction
-
     return predictions
 
 
 
-def predict_tracks(track_predictor, images, fmaps_for_tracker, query_frame_indexes, frame_num, device, cfg=None):
+def predict_tracks(query_method, max_query_pts, track_predictor, images, fmaps_for_tracker, query_frame_indexes, frame_num, device, cfg=None):
     pred_track_list = []
     pred_vis_list = []
     pred_score_list = []
 
     for query_index in query_frame_indexes:
         # Find query_points at the query frame
-        query_points = get_query_points(images[:, query_index], cfg.query_method, cfg.max_query_pts)
+        query_points = get_query_points(images[:, query_index], query_method, max_query_pts)
 
         # Switch so that query_index frame stays at the first frame
         # This largely simplifies the code structure of tracker
@@ -393,6 +351,42 @@ def predict_tracks(track_predictor, images, fmaps_for_tracker, query_frame_index
     pred_vis = torch.cat(pred_vis_list, dim=2)
     pred_score = torch.cat(pred_score_list, dim=2)
 
+    return pred_track, pred_vis, pred_score
+
+
+def comple_nonvis_frames(track_predictor, images, fmaps_for_tracker, frame_num, device, pred_track, pred_vis, pred_score, min_vis=500,cfg=None):
+    # if a frame has too few visible inlier, use it as a query  
+    non_vis_frames = torch.nonzero((pred_vis.squeeze(0) > 0.05).sum(-1) < min_vis).squeeze(-1).tolist()
+    last_query = -1
+    while len(non_vis_frames) > 0:
+        print("Processing non visible frames")
+        print(non_vis_frames)
+        if non_vis_frames[0] == last_query:
+            print("The non vis frame still does not has enough 2D matches")
+            pred_track_comple, pred_vis_comple, pred_score_comple = predict_tracks(
+                "sp+sift+aliked", cfg.max_query_pts // 2,
+                track_predictor, images,
+                fmaps_for_tracker, non_vis_frames,
+                frame_num, device, cfg)
+            # concat predictions
+            pred_track = torch.cat([pred_track, pred_track_comple], dim=2)
+            pred_vis = torch.cat([pred_vis, pred_vis_comple], dim=2)
+            pred_score = torch.cat([pred_score, pred_score_comple], dim=2)
+            break
+
+        non_vis_query_list = [non_vis_frames[0]]
+        last_query = non_vis_frames[0]
+        pred_track_comple, pred_vis_comple, pred_score_comple = predict_tracks(
+            cfg.query_method, cfg.max_query_pts,
+            track_predictor, images,
+            fmaps_for_tracker, non_vis_query_list,
+            frame_num, device, cfg)
+
+        # concat predictions
+        pred_track = torch.cat([pred_track, pred_track_comple], dim=2)
+        pred_vis = torch.cat([pred_vis, pred_vis_comple], dim=2)
+        pred_score = torch.cat([pred_score, pred_score_comple], dim=2)
+        non_vis_frames = torch.nonzero((pred_vis.squeeze(0) > 0.05).sum(-1) < min_vis).squeeze(-1).tolist()
     return pred_track, pred_vis, pred_score
 
 
@@ -470,4 +464,4 @@ def seed_all_random_engines(seed: int) -> None:
 
 if __name__ == "__main__":
     with torch.no_grad():
-        test_fn()
+        demo_fn()

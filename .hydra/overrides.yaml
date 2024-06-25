@@ -1,1 +1,4 @@
 - comple_nonvis=True
+- BA_iters=2
+- robust_refine=3
+- max_query_pts=2048

@@ -312,6 +312,6 @@ def calculate_crop_parameters(image, bbox, crop_dim, img_size):
     crop_width = 2 * s * (bbox[2] - bbox[0]) / length
     bbox_after = bbox / crop_dim * img_size
     crop_parameters = torch.tensor(
-        [-cc[0], -cc[1], crop_width, s, bbox_after[0], bbox_after[1], bbox_after[2], bbox_after[3]]
+        [width, height, crop_width, s, bbox_after[0], bbox_after[1], bbox_after[2], bbox_after[3]]
     ).float()
     return crop_parameters

@@ -157,6 +157,8 @@ def init_BA(extrinsics, intrinsics, tracks, points_3d_pair, inlier, image_size, 
 
     # Conduct BA
     pycolmap.bundle_adjustment(reconstruction, ba_options)
+    
+    reconstruction.normalize(5.0,  0.1,  0.9,  True)
 
     # Get the optimized 3D points, extrinsics, and intrinsics
     points3D_opt, extrinsics_opt, intrinsics_opt = pycolmap_to_batch_matrix(
@@ -191,6 +193,7 @@ def refine_pose(
     image_size,
     max_reproj_error=12,
     camera_type="simple_pinhole",
+    force_estimate = False,
     ):
     # extrinsics: Sx3x4
     # intrinsics: Sx3x3
@@ -231,10 +234,11 @@ def refine_pose(
 
     reproj_inlier = reproj_error <= (max_reproj_error**2)
     
-    inlier_absrefine = torch.logical_and(inlier[:, valid_track_mask], reproj_inlier)
+    inlier_nongeo = inlier[:, valid_track_mask]
+    inlier_absrefine = torch.logical_and(inlier_nongeo, reproj_inlier)
         
         
-        
+    inlier_nongeo = inlier_nongeo.cpu().numpy()
     inlier_absrefine = inlier_absrefine.cpu().numpy()
     # P' x 3
     points3D = points3D.cpu().numpy()
@@ -288,7 +292,7 @@ def refine_pose(
 
         estimate_abs_pose = False
 
-        if inlier_mask.sum() > 200:
+        if inlier_mask.sum() > 100:
             answer = pycolmap.pose_refinement(cam_from_world, points2D, points3D, inlier_mask, pycamera, refoptions)
             cam_from_world = answer["cam_from_world"]
             
@@ -299,15 +303,27 @@ def refine_pose(
                 estimate_abs_pose = True
         else:
             estimate_abs_pose = True
-            print("This frame only has inliers:", inlier_mask.sum())
+            print(f"Frame {ridx} only has {inlier_mask.sum()} geo_vis inliers")
 
-        if estimate_abs_pose:
-            print("Estimating absolut poses")
-            answer = pycolmap.absolute_pose_estimation(points2D, points3D, pycamera, estoptions, refoptions)
-            cam_from_world = answer["cam_from_world"]
+        if estimate_abs_pose and force_estimate:
+            inlier_mask = inlier_nongeo[ridx]
+            if inlier_mask.sum() > 50:
+                print(f"Estimating absolute poses by visible matches for frame {ridx}")
+                estanswer = pycolmap.absolute_pose_estimation(points2D[inlier_mask], points3D[inlier_mask], pycamera, estoptions, refoptions)
+                if estanswer is None:
+                    estanswer = pycolmap.absolute_pose_estimation(points2D, points3D, pycamera, estoptions, refoptions)
+            else:
+                print(f"Warning! Estimating absolute poses by non visible matches for frame {ridx}")
+                estanswer = pycolmap.absolute_pose_estimation(points2D, points3D, pycamera, estoptions, refoptions)
+                            
+            if estanswer is not None:
+                cam_from_world = estanswer["cam_from_world"]
+
 
         extri_mat = cam_from_world.matrix()
         intri_mat = pycamera.calibration_matrix()
+
+
         refined_extrinsics.append(extri_mat)
         refined_intrinsics.append(intri_mat)
 
@@ -319,13 +335,16 @@ def refine_pose(
     valid_intri_mask = torch.logical_and(
         refined_intrinsics[:, 0, 0] >= 0.1 * scale, refined_intrinsics[:, 0, 0] <= 30 * scale
     )
+    valid_trans_mask = (refined_extrinsics[:,:,3].abs() <= 30).all(-1)
+    
+    valid_frame_mask = torch.logical_and(valid_intri_mask, valid_trans_mask)
+    
+    if (~valid_frame_mask).sum() > 0:
+        print("some frames are invalid after BA refinement")
+        refined_extrinsics[~valid_frame_mask] = extrinsics[~valid_frame_mask].to(refined_extrinsics.dtype)
+        refined_intrinsics[~valid_frame_mask] = intrinsics[~valid_frame_mask].to(refined_extrinsics.dtype)
 
-    if (~valid_intri_mask).sum() > 0:
-        print("some intri are invalid after BA refinement")
-        refined_extrinsics[~valid_intri_mask] = extrinsics[~valid_intri_mask].to(refined_extrinsics.dtype)
-        refined_intrinsics[~valid_intri_mask] = intrinsics[~valid_intri_mask].to(refined_extrinsics.dtype)
-
-    return refined_extrinsics, refined_intrinsics, valid_intri_mask
+    return refined_extrinsics, refined_intrinsics, valid_frame_mask
 
     
     
@@ -464,13 +483,17 @@ def init_refine_pose(
     valid_intri_mask = torch.logical_and(
         refined_intrinsics[:, 0, 0] >= 0.1 * scale, refined_intrinsics[:, 0, 0] <= 30 * scale
     )
+    valid_trans_mask = (refined_extrinsics[:,:,3].abs() <= 30).all(-1)
+    
+    valid_frame_mask = torch.logical_and(valid_intri_mask, valid_trans_mask)
+    
+    if (~valid_frame_mask).sum() > 0:
+        print("some frames are invalid after BA refinement")
+        refined_extrinsics[~valid_frame_mask] = extrinsics[~valid_frame_mask].to(refined_extrinsics.dtype)
+        refined_intrinsics[~valid_frame_mask] = intrinsics[~valid_frame_mask].to(refined_extrinsics.dtype)
 
-    if (~valid_intri_mask).sum() > 0:
-        print("some intri are invalid after BA refinement during init")
-        refined_extrinsics[~valid_intri_mask] = extrinsics[~valid_intri_mask].to(refined_extrinsics.dtype)
-        refined_intrinsics[~valid_intri_mask] = intrinsics[~valid_intri_mask].to(refined_extrinsics.dtype)
+    return refined_extrinsics, refined_intrinsics, valid_frame_mask
 
-    return refined_extrinsics, refined_intrinsics, valid_intri_mask
 
 
 def triangulate_multi_view_point_from_tracks(cams_from_world, tracks, mask=None):
@@ -705,9 +728,13 @@ def global_BA(
         BA_points, extrinsics, intrinsics, BA_tracks, BA_inlier_masks, image_size, camera_type=camera_type
     )
     pycolmap.bundle_adjustment(reconstruction, ba_options)
+    
+
+    reconstruction.normalize(5.0,  0.1,  0.9,  True)
+
     points3D_opt, extrinsics, intrinsics = pycolmap_to_batch_matrix(reconstruction, device=device)
 
-    return points3D_opt, extrinsics, intrinsics
+    return points3D_opt, extrinsics, intrinsics, reconstruction
 
 
 def iterative_global_BA(
@@ -719,6 +746,7 @@ def iterative_global_BA(
     valid_tracks,
     points3D_opt,
     image_size,
+    lastBA=False,
     min_valid_track_length=2,
     max_reproj_error=1,
     ba_options=None,
@@ -733,9 +761,9 @@ def iterative_global_BA(
         extrinsics, tracks_normalized_refined, track_vis=pred_vis, track_score=pred_score, max_ransac_iters=128
     )
 
-    # Should we use this?
     best_triangulated_points[valid_tracks] = points3D_opt
 
+    # well do we need this? best_inlier_mask may be enough already
     valid_poins3D_mask, filtered_inlier_mask = filter_all_points3D(
         best_triangulated_points,
         pred_tracks,
@@ -757,6 +785,32 @@ def iterative_global_BA(
         BA_points, extrinsics, intrinsics, BA_tracks, BA_inlier_masks, image_size, camera_type="simple_pinhole"
     )
     pycolmap.bundle_adjustment(reconstruction, ba_options)
+        
+    reconstruction.normalize(5.0,  0.1,  0.9,  True)
+    
     points3D_opt, extrinsics, intrinsics = pycolmap_to_batch_matrix(reconstruction, device=pred_tracks.device)
 
-    return points3D_opt, extrinsics, intrinsics, valid_tracks, reconstruction
+    valid_poins3D_mask, filtered_inlier_mask = filter_all_points3D(
+        points3D_opt,
+        pred_tracks[:, valid_tracks],
+        extrinsics,
+        intrinsics,
+        max_reproj_error=max_reproj_error,
+        return_detail=True,
+    )
+
+    valid_tracks_afterBA = filtered_inlier_mask.sum(dim=0) >= min_valid_track_length
+    valid_tracks_tmp = valid_tracks.clone()
+    valid_tracks_tmp[valid_tracks] = valid_tracks_afterBA
+    valid_tracks = valid_tracks_tmp.clone()
+    points3D_opt = points3D_opt[valid_tracks_afterBA]
+    BA_inlier_masks = filtered_inlier_mask[:, valid_tracks_afterBA]
+    
+    if lastBA:
+        print("Saving in a colmap format")
+        BA_tracks = pred_tracks[:, valid_tracks]
+        reconstruction = batch_matrix_to_pycolmap(
+            points3D_opt, extrinsics, intrinsics, BA_tracks, BA_inlier_masks, image_size, camera_type="simple_pinhole"
+            )
+        
+    return points3D_opt, extrinsics, intrinsics, valid_tracks, BA_inlier_masks, reconstruction
