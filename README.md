@@ -18,7 +18,7 @@ dir="auto">[<a href="https://arxiv.org/pdf/2312.04563.pdf" rel="nofollow">Paper<
 
 
 **Updates:**
-- [Jun 235, 2024] Upgrade to VGGSfM 2.0! More memory efficient, more robust, more powerful, and easier to start!
+- [Jun 25, 2024] Upgrade to VGGSfM 2.0! More memory efficient, more robust, more powerful, and easier to start!
 
 
 - [Apr 23, 2024] Release the code and model weight for VGGSfM v1.1.
@@ -52,11 +52,11 @@ python demo.py SCENE_DIR=examples/british_museum query_frame_num=2 resume_ckpt=/
 python demo.py SCENE_DIR=examples/apple query_frame_num=5 max_query_pts=2048 resume_ckpt=/PATH/YOUR/CKPT 
 ```
 
-All the flags are defaulted in ```cfgs/demo.yaml```. Feel free to modify it yourself.
+All the flags are defaulted in ```cfgs/demo.yaml```. 
 
-The reconstruction result (camera parameters and 3D points) will be automatically saved in the COLMAP format at ```output/seq_name```. You can use the COLMAP viewer to check them. 
+The reconstruction result (camera parameters and 3D points) will be automatically saved in the COLMAP format at ```output/seq_name```. You can use the [COLMAP GUI](https://colmap.github.io/gui.html) to view them. 
 
-If you want to visualize it more easily, we provide an approach supported by [visdom](https://github.com/fossasia/visdom). To begin using Visdom, start the server by entering visdom in the command line. Once the server is running, access Visdom by navigating to http://localhost:8097 in your web browser. Now every reconstruction will be visualized and saved to the visdom server by enabling ```visualize=True```:
+If you want to visualize it more easily, we provide an approach supported by [visdom](https://github.com/fossasia/visdom). To begin using Visdom, start the server by entering ```visdom``` in the command line. Once the server is running, access Visdom by navigating to ```http://localhost:8097``` in your web browser. Now every reconstruction will be visualized and saved to the visdom server by enabling ```visualize=True```:
 
 ```bash
 python demo.py visualize=True ...(other flags)
